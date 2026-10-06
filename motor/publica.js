@@ -2,9 +2,9 @@
 // que se sobrescribe cada corrida. No hay ZIP, ni FTP, ni artefacto que descargar: se pega la URL
 // una vez en Meta (o TikTok) y ya nunca más se toca.
 //
-//   node app/publica.js <tienda/nombre> --parte K --de N   dibuja 1 de cada N productos
-//   node app/publica.js <tienda/nombre> --unir --de N      une las partes, escribe feed.csv y poda
-//   node app/publica.js <tienda/nombre>                    todo de una (catálogos chicos, o en local)
+//   node motor/publica.js <tienda/nombre> --parte K --de N   dibuja 1 de cada N productos
+//   node motor/publica.js <tienda/nombre> --unir --de N      une las partes, escribe feed.csv y poda
+//   node motor/publica.js <tienda/nombre>                    todo de una (catálogos chicos, o en local)
 //
 // Todo se escribe dentro de PAGES_DIR (por defecto `docs/`, que es una de las dos carpetas que GitHub
 // Pages sabe servir sin configurar nada raro: Settings > Pages > Branch main, carpeta /docs):
@@ -66,7 +66,7 @@ function buscarChrome() {
 // El mismo servidor de la Fábrica, en otro puerto y apuntando a la carpeta de Pages.
 async function levantarServidor() {
   const env = { ...process.env, PORT: String(PUERTO), FEEDS_AUTO: 'no', PAGES_DIR: PAGES };
-  const srv = spawn(process.execPath, [path.join(__dirname, 'server.js')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const srv = spawn(process.execPath, [path.join(__dirname, 'servidor.js')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   srv.stdout.on('data', d => process.stdout.write(String(d).replace(/^(?=.)/gm, '  ')));
   srv.stderr.on('data', d => process.stderr.write(String(d).replace(/^(?=.)/gm, '  ! ')));
   for (let i = 0; i < 50; i++) {
@@ -79,7 +79,7 @@ async function levantarServidor() {
 }
 
 async function pedir(ruta, cuerpo) {
-  // El servidor solo acepta escrituras de su propia página (ctxLocal en server.js): hay que decir de dónde viene.
+  // El servidor solo acepta escrituras de su propia página (motor/servidor.js): hay que decir de dónde viene.
   const origen = `http://127.0.0.1:${PUERTO}`;
   const r = await fetch(origen + ruta, cuerpo === undefined ? {}
     : { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origen }, body: JSON.stringify(cuerpo) });
@@ -147,7 +147,7 @@ function cerrarEstado(slug) {
 
 async function main() {
   const slug = arg.find((a, i) => !a.startsWith('--') && !CON_VALOR.includes(arg[i - 1]));
-  if (!slug || !SLUG.test(slug)) throw new Error('Uso: node app/publica.js <tienda/nombre> [--parte K --de N | --unir --de N]');
+  if (!slug || !SLUG.test(slug)) throw new Error('Uso: node motor/publica.js <tienda/nombre> [--parte K --de N | --unir --de N]');
   if (!fs.existsSync(path.join(RECETAS, slug + '.json'))) throw new Error('No hay receta auto/recetas/' + slug + '.json');
   if (PARTE >= DE) throw new Error(`--parte ${PARTE} no existe con --de ${DE}`);
   fs.mkdirSync(dirSlug(slug), { recursive: true });

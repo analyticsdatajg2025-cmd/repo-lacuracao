@@ -1,5 +1,5 @@
 # Reintento automatico de una corrida de feeds que fallo por bloqueo de la tienda.
-# En el repo va como .github/workflows/reintenta.yml (lo copia app/armar-repo.js).
+# En el repo va como .github/workflows/reintenta.yml (lo copia motor/armar-repo.js).
 #
 # Por que existe: lacuracao.pe tiene un WAF que corta la IP ENTERA de una maquina de Actions.
 # Cuando le toca a una parte, esa maquina recibe 502 en TODAS las fotos, la parte muere y `unir`

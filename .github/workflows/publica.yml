@@ -1,5 +1,5 @@
 # Feeds a GitHub Pages: las piezas y el CSV viven en este mismo repo y se sirven por Pages.
-# En el repo va como .github/workflows/publica.yml (lo copia app/armar-repo.js).
+# En el repo va como .github/workflows/publica.yml (lo copia motor/armar-repo.js).
 #
 # Se acabó el ZIP: cada feed tiene una URL fija que se sobrescribe en cada corrida
 #   https://<dueño>.github.io/<repo>/<tienda>/<nombre>/feed.csv
@@ -165,7 +165,7 @@ jobs:
         run: |
           # Solo dígitos: lo que se escribe en el formulario nunca entra crudo en la línea de comandos.
           LIM=$(printf '%s' "$LIMITE" | tr -cd '0-9')
-          node app/publica.js "${{ matrix.tarea.slug }}" --parte ${{ matrix.tarea.parte }} --de ${{ matrix.tarea.de }} ${LIM:+--limite $LIM}
+          node motor/publica.js "${{ matrix.tarea.slug }}" --parte ${{ matrix.tarea.parte }} --de ${{ matrix.tarea.de }} ${LIM:+--limite $LIM}
       - name: Guardar lo dibujado para el paso de unir
         # OJO con README.md: upload-artifact recorta la carpeta común de lo que sube. Sin un archivo
         # de la raíz, docs/<tienda>/<nombre>/ se pierde y al bajarlo las partes caen fuera de docs/.
@@ -205,7 +205,7 @@ jobs:
             });
           ' > lista.txt
           while read -r slug de; do
-            node app/publica.js "$slug" --unir --de "$de"
+            node motor/publica.js "$slug" --unir --de "$de"
           done < lista.txt
           rm -f lista.txt
       - name: Un solo commit, un solo push

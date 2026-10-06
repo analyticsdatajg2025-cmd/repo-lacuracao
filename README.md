@@ -15,9 +15,9 @@ No hace falta ningún secreto: el commit lo hace el token que GitHub da solo.
 
 ## Cómo corre
 
-`.github/workflows/publica.yml`, cada hora en punto. Tres pasos:
+`.github/workflows/publica.yml`, dos veces por hora (GitHub se salta disparos programados; cada uno decide si alguna hora venció sin publicarse). Tres pasos:
 
-1. **recetas**: qué feeds tocan esta hora (cada receta trae su horario en hora de Lima) y en cuántas partes.
+1. **recetas**: qué feeds tienen una hora vencida (de las últimas 6 h, hora de Lima) sin corrida posterior en su `historial.json`, y en cuántas partes.
 2. **dibujar**: varias máquinas en paralelo. Cada una dibuja **solo lo que falta**: el nombre de la pieza
    lleva la firma del diseño y del precio, así que si ya está en `estado.json` ni se baja la foto.
    Esa copia del repo **no se trae las imágenes**, solo la lista: por eso arranca en segundos.
@@ -28,7 +28,7 @@ No hace falta ningún secreto: el commit lo hace el token que GitHub da solo.
 También se puede disparar a mano en Actions → **Feeds a Pages** → Run workflow (con un `tienda/nombre`
 para una sola, y opcionalmente en cuántas partes).
 
-- Las recetas (`auto/recetas/<tienda>/<nombre>.json`) se crean y programan desde el panel «Mis feeds»
-  de la Fábrica; el horario y el pausado van ahí, no en el workflow.
+- Las recetas (`auto/recetas/<tienda>/<nombre>.json`) se crean en la Fábrica de piezas y se programan en
+  «Feeds a Meta y TikTok» de MKT SISTEMAS (en la nube); el horario y el pausado van ahí, no en el workflow.
 - Si el catálogo cae a menos de la mitad de golpe, no se publica (receta con `"permitir_caida": true`
   para forzarlo una vez).

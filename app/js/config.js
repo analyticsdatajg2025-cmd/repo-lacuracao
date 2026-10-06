@@ -1,4 +1,4 @@
-// Configuración de la app. Hoy todo corre en local (app/server.js).
+// Configuración de la app. Corre en la nube (Worker de Cloudflare, nube/).
 // Al pasar a Supabase, el proxy será una Edge Function y aquí cambia solo esta línea.
 const PROXY = '/proxy?url=';
 // Una URL del propio sitio (/demo/x.svg) no pasa por el proxy: el proxy solo acepta dominios de PERMITIDOS y la rechazaba con 403.
@@ -27,6 +27,10 @@ export const fmtFondo = pl => {
 export const formatos = pl => { const f = fmtFondo(pl); return f ? [...FORMATOS, f] : [...FORMATOS]; };
 
 // C{AAMM}_{NOMBRE}_{ANUNCIANTE}, ver CLAUDE.md §4. Nunca se falsea.
+// El segmento del anunciante es opcional **a propósito**: las campañas propias del grupo no
+// tienen anunciante y obligarlas a llevar uno sería inventarlo (§4: estos ids no se falsean).
+// «+ Nueva campaña» sí lo pide aparte para que nunca acabe pegado dentro del nombre.
+// Espejo de CAMPAIGN_RE en nube/validadores.js: si una cambia, la otra también.
 export const CAMPAIGN_RE = /^C\d{2}(0[1-9]|1[0-2])_[A-Z0-9]+(_[A-Z0-9]+)?$/; // C + AAMM con mes real
 
 // Marcas del grupo: n = nombre (igual al de campanas.marca), c = sigla del selector, x = color.
