@@ -29,6 +29,10 @@ export function precio(v) {
 
 export const fmtPrecio = p => !p ? '' : (p.cur === 'PEN' ? 'S/ ' : p.cur + ' ') + p.v.toLocaleString('es-PE', { minimumFractionDigits: p.v % 1 ? 2 : 0, maximumFractionDigits: 2 });
 
+// Magento escribe «…/media/catalog/product/no_selection» cuando el producto no tiene foto: no es una
+// imagen (Meta la rechaza). Cuenta como sin foto, igual que el campo vacío.
+const fotoReal = u => /\/no_selection\/?$/i.test(u) ? '' : u;
+
 function mapear(fila) {
   const r = {};
   for (const k in fila) r[norm(k)] = fila[k];
@@ -37,7 +41,7 @@ function mapear(fila) {
   const oferta = sp && p && sp.v < p.v;
   const cat = get('category');
   return {
-    sku: get('sku'), title: textoPlano(get('title')), link: get('link'), image: get('image'), brand: get('brand'),
+    sku: get('sku'), title: textoPlano(get('title')), link: get('link'), image: fotoReal(get('image')), brand: get('brand'),
     category: cat.split('>').map(x => x.trim()).filter(Boolean).slice(0, 2).join(' > '),
     price: oferta ? sp : p, oldPrice: oferta ? p : null,
     stock: !/out|agotado|sin stock/i.test(get('availability')),
