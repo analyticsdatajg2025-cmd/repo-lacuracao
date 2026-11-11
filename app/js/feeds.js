@@ -95,7 +95,8 @@ function json(txt) {
 }
 
 export function parsear(txt) {
-  const t = txt.replace(/^\uFEFF/, '').trimStart();
+  // Los feeds de Facebook de Magento abren con líneas «# ref_application_id …» antes del encabezado.
+  const t = txt.replace(/^\uFEFF/, '').trimStart().replace(/^(#[^\n]*\n\s*)+/, '');
   const filas = t.startsWith('<') ? xml(t) : (t.startsWith('[') || t.startsWith('{')) ? json(t) : delimitado(t);
   return filas.map(mapear).filter(p => p.sku && p.title);
 }

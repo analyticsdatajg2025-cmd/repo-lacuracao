@@ -55,10 +55,29 @@ async function traer(destino) {
   } finally { clearTimeout(reloj); }
 }
 
+// Plan B para las fotos: algunas tiendas (su WAF) cortan a las IP de las máquinas de GitHub y entonces
+// no se dibuja ni una pieza nueva (pasó días enteros con 0 nuevas). La nube del sistema (Cloudflare) sí
+// tiene paso: si la foto falla directo, se pide por su /proxy. Tras varias fallas seguidas se va directo
+// por la nube, para no pagar dos intentos por foto. Sin PROXY_NUBE todo sigue como antes.
+const NUBE = /^https:\/\/[\w.-]+\/proxy$/.test(process.env.PROXY_NUBE || '') ? process.env.PROXY_NUBE : '';
+let directasMalas = 0;
+const esFoto = u => /\.(jpe?g|png|webp|gif)(\?|$)/i.test(u);
+async function traerFoto(destino) {
+  if (!NUBE || !esFoto(destino)) return traer(destino);
+  if (directasMalas < 5) {
+    try {
+      const r = await traer(destino);
+      if (r.ok && r.tipo.startsWith('image/')) { directasMalas = 0; return r; }
+    } catch { /* se intenta por la nube */ }
+    directasMalas++;
+  }
+  return traer(NUBE + '?url=' + encodeURIComponent(destino));
+}
+
 async function proxy(req, res, destino) {
   if (!permitido(destino)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Dominio no permitido'); }
   try {
-    const { status, tipo, buf } = await traer(destino);
+    const { status, tipo, buf } = await traerFoto(destino);
     res.writeHead(status, { ...SEGURO, 'Content-Type': tipo, 'Cache-Control': 'no-store' });
     res.end(buf);
   } catch (e) {

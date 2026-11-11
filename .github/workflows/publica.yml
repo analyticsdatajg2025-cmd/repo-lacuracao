@@ -162,10 +162,13 @@ jobs:
       - name: Dibujar
         env:
           LIMITE: ${{ github.event.inputs.limite }}
+          # Si la tienda corta las fotos a esta máquina, se piden por la nube del sistema (motor/servidor.js).
+          PROXY_NUBE: https://mkt-sistemas.analytics-data-jg-2025.workers.dev/proxy
         run: |
           # Solo dígitos: lo que se escribe en el formulario nunca entra crudo en la línea de comandos.
+          # --plazo 38: la parte deja de dibujar a los 38 min y entrega lo hecho (el job muere a los 45).
           LIM=$(printf '%s' "$LIMITE" | tr -cd '0-9')
-          node motor/publica.js "${{ matrix.tarea.slug }}" --parte ${{ matrix.tarea.parte }} --de ${{ matrix.tarea.de }} ${LIM:+--limite $LIM}
+          node motor/publica.js "${{ matrix.tarea.slug }}" --parte ${{ matrix.tarea.parte }} --de ${{ matrix.tarea.de }} --plazo 38 ${LIM:+--limite $LIM}
       - name: Guardar lo dibujado para el paso de unir
         # OJO con README.md: upload-artifact recorta la carpeta común de lo que sube. Sin un archivo
         # de la raíz, docs/<tienda>/<nombre>/ se pierde y al bajarlo las partes caen fuera de docs/.
@@ -204,25 +207,91 @@ jobs:
               for (const f of JSON.parse(t)) console.log(f.slug + " " + f.de);
             });
           ' > lista.txt
+          # Un feed que falla no frena a los demás: su error queda en su log (historial.json), se
+          # publica con el commit de abajo y al final el job sale en rojo igual.
+          fallo=0
           while read -r slug de; do
-            node motor/publica.js "$slug" --unir --de "$de"
+            node motor/publica.js "$slug" --unir --de "$de" || { echo "::error::$slug no se publicó (el motivo queda en su log de cambios)"; fallo=1; }
           done < lista.txt
           rm -f lista.txt
-      - name: Un solo commit, un solo push
+          echo "FALLO_UNIR=$fallo" >> "$GITHUB_ENV"
+      - name: Subir en tandas (fotos primero, el CSV al final)
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add -A docs
           git diff --cached --quiet && { echo "Nada cambió"; exit 0; }
-          git commit -m "Feeds a Pages: $(TZ=America/Lima date '+%Y-%m-%d %H:%M') (Lima)"
+          git reset -q
           # Empujar 15 mil fotos tarda un minuto, y en ese minuto la Fabrica puede haber empujado
           # una receta: GitHub rechaza con «cannot lock ref ... is at X but expected Y» y se perdia
           # la corrida entera. Se reintenta: traer, reponer nuestro commit encima y volver a empujar.
-          for intento in 1 2 3 4 5; do
-            if git push origin "HEAD:${GITHUB_REF_NAME}"; then exit 0; fi
-            echo "Push rechazado (intento $intento); me reengancho a lo que hay en GitHub"
-            sleep $((intento * 10))
-            git fetch origin "${GITHUB_REF_NAME}"
-            git rebase "origin/${GITHUB_REF_NAME}" || { git rebase --abort || true; git reset --hard "origin/${GITHUB_REF_NAME}"; exit 1; }
+          empujar() {
+            for intento in 1 2 3 4 5; do
+              if git push origin "HEAD:${GITHUB_REF_NAME}"; then return 0; fi
+              echo "Push rechazado (intento $intento); me reengancho a lo que hay en GitHub"
+              sleep $((intento * 10))
+              git fetch origin "${GITHUB_REF_NAME}"
+              git rebase "origin/${GITHUB_REF_NAME}" || { git rebase --abort || true; git reset --hard "origin/${GITHUB_REF_NAME}"; return 1; }
+            done
+            echo "No se pudo empujar despues de 5 intentos"; return 1
+          }
+          # Un catálogo grande con todo nuevo pesa varios GB y GitHub corta ese push (HTTP 500).
+          # Las fotos nuevas suben en tandas de 6 mil; el CSV, el historial y las borradas van al
+          # final, así el feed nunca apunta a una foto que todavía no está en GitHub.
+          git ls-files -o --exclude-standard -- 'docs/*/*/img/*' > "$RUNNER_TEMP/nuevas.txt"
+          split -l 6000 "$RUNNER_TEMP/nuevas.txt" "$RUNNER_TEMP/tanda_" || true
+          n=0
+          for t in "$RUNNER_TEMP"/tanda_*; do
+            [ -s "$t" ] || continue
+            n=$((n + 1))
+            xargs -a "$t" -d '\n' git add --
+            git commit -q -m "Feeds a Pages: fotos, tanda $n"
+            empujar || exit 1
           done
-          echo "No se pudo empujar despues de 5 intentos"; exit 1
+          git add -A docs
+          git diff --cached --quiet && exit 0
+          git commit -m "Feeds a Pages: $(TZ=America/Lima date '+%Y-%m-%d %H:%M') (Lima)"
+          empujar || exit 1
+
+  # Respaldo sin marco: si «dibujar» o «unir» fallan, la URL del feed no se queda vieja. Para cada feed
+  # de esta corrida que no publicó, se escribe el feed de la tienda tal cual (fotos originales, precios
+  # de hoy) en la misma URL. La próxima corrida buena vuelve a poner las imágenes con marco.
+  respaldo:
+    needs: [recetas, dibujar, unir]
+    if: ${{ always() && needs.recetas.outputs.matriz != '[]' && (needs.dibujar.result != 'success' || needs.unir.result != 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Lo último de la rama (unir pudo haber publicado algún feed y su historial), sin las fotos.
+          ref: ${{ github.ref_name }}
+          sparse-checkout: |
+            auto/*
+            auto/recetas/*
+            auto/recetas/*/*
+            app/js/*
+            motor/*
+            docs/*/*/historial.json
+            docs/*/*/feed.csv
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Publicar el feed de la tienda sin marco donde la corrida falló
+        env:
+          FEEDS: ${{ needs.recetas.outputs.feeds }}
+          PROXY_NUBE: https://mkt-sistemas.analytics-data-jg-2025.workers.dev/proxy
+        run: |
+          SLUGS=$(echo "$FEEDS" | node -e 'let t="";process.stdin.on("data",d=>t+=d).on("end",()=>console.log(JSON.parse(t).map(f=>f.slug).join(" ")))')
+          node motor/respaldo.js $SLUGS || true
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A docs
+          git diff --cached --quiet && { echo "No hizo falta respaldo"; exit 0; }
+          git commit -m "Respaldo sin marco: $(TZ=America/Lima date '+%Y-%m-%d %H:%M') (Lima)"
+          for intento in 1 2 3 4 5; do
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep $((intento * 10)); git pull -q --rebase origin "${GITHUB_REF_NAME}" || true
+          done
+          exit 1

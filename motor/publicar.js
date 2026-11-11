@@ -37,7 +37,7 @@ function config() {
 
 function csvAuto(filas, raiz) {
   const lineas = [COLS.join(',')];
-  for (const f of filas) lineas.push(COLS.map(c => esc(c === 'image_link' ? raiz + '/img/' + f._img : f[c])).join(','));
+  for (const f of filas) lineas.push(COLS.map(c => esc(c === 'image_link' ? (f._orig || raiz + '/img/' + f._img) : f[c])).join(','));
   return '\uFEFF' + lineas.join('\n') + '\n';
 }
 
@@ -107,9 +107,20 @@ async function auto(req, u, accion, slug, ctx, c) {
     }
     const img = path.join(d, 'img'), productos = {}, filas = [];
     let nuevas = 0, repetidos = 0;
+    let originales = 0;
+    const conOrig = new Set();
     for (const f of b.filas) {
+      // Producto sin pieza: sale con su foto original (https de la tienda) y no entra al estado, así la
+      // próxima corrida lo vuelve a intentar dibujar.
+      if (f && f.id && f._orig) {
+        if (!/^https:\/\/[^\s"<>]+$/.test(f._orig)) return out(400, { error: 'Foto original no válida: ' + String(f.id).slice(0, 40) });
+        if (Object.hasOwn(productos, f.id) || conOrig.has(f.id)) { repetidos++; continue; }
+        conOrig.add(f.id);
+        filas.push(Object.fromEntries([...COLS.filter(k => k !== 'image_link').map(k => [k, String(f[k] ?? '').slice(0, 10000)]), ['_orig', f._orig]]));
+        originales++; continue;
+      }
       if (!f || !f.id || !ARCHIVO.test(f._img || '') || !FIRMA.test(f._firma || '')) return out(400, { error: 'Fila sin id, imagen o firma: ' + String(f && f.id).slice(0, 40) });
-      if (Object.hasOwn(productos, f.id)) { repetidos++; continue; } // dos partes pueden traer el mismo id: gana la primera
+      if (Object.hasOwn(productos, f.id) || conOrig.has(f.id)) { repetidos++; continue; } // dos partes pueden traer el mismo id: gana la primera
       const local = fs.existsSync(path.join(img, f._img));
       if (!local && !conocidos.has(f._img)) return out(400, { error: 'Falta la imagen ' + f._img });
       if (local) nuevas++;
@@ -123,8 +134,8 @@ async function auto(req, u, accion, slug, ctx, c) {
     for (const a of conocidos) if (!usados.has(a)) retirados[a] = prev.retirados[a] || ahora;
     fs.writeFileSync(path.join(d, 'feed.csv'), csvAuto(filas, c.raiz + '/' + slug));
     fs.writeFileSync(path.join(d, 'estado.nuevo.json'), JSON.stringify({ version: 1, slug, actualizado: ahora, productos, retirados }));
-    const res = { productos: filas.length, nuevas, reusadas: filas.length - nuevas, retiradas: Object.keys(retirados).length,
-      atrasadas: Number(b.atrasadas) || 0, leidos: Number(b.leidos) || 0,
+    const res = { productos: filas.length, nuevas, reusadas: filas.length - nuevas - originales, retiradas: Object.keys(retirados).length,
+      atrasadas: Number(b.atrasadas) || 0, leidos: Number(b.leidos) || 0, originales,
       fuera: { ...(b.fuera || {}), repetidos: ((b.fuera || {}).repetidos || 0) + repetidos } };
     fin({ ok: true, ...res });
     return out(200, res);

@@ -86,7 +86,7 @@ async function correr() {
   for (const p of prods) {
     const { fila } = filaMeta(p);
     if (!p.image) { fuera['sin foto']++; continue; }
-    if (!fila.price) { fuera['sin precio']++; continue; }
+    if (!fila.price || !(p.price?.v > 0)) { fuera['sin precio']++; continue; } // un S/ 0 en la pieza es un error del feed
     if (!/^https?:\/\//.test(fila.link)) { fuera['sin link']++; continue; }
     if (ids.has(fila.id)) { fuera.repetidos++; continue; } // Meta no acepta dos filas con el mismo id
     ids.add(fila.id);
@@ -122,9 +122,13 @@ async function correr() {
   }
   // Si no se puede dibujar ahora, se deja la pieza anterior solo si muestra el mismo precio
   // (cambió la plantilla o el título, no el precio). Queda con su firma vieja: la próxima corrida la rehace.
+  // Respaldo por producto: si no hay pieza con su precio de hoy, el producto sale igual con su foto
+  // ORIGINAL (la de la tienda, sin marco) y su precio actual. Nunca se cae del feed por no poder dibujarlo.
+  let originales = 0;
   const anterior = t => {
     const v = (estado.productos || {})[t.fila.id];
     if (v && v[2] === t.pf && enHosting.has(v[1])) { atrasadas++; return { ...t, firma: v[0], archivo: v[1] }; }
+    if (/^https:\/\//.test(t.p.image || '')) { originales++; return { ...t, original: t.p.image }; }
     return null;
   };
   async function hilo() {
@@ -161,10 +165,11 @@ async function correr() {
   if (cortado) return;
   if (bloqueada) await progreso(`Tienda bloqueada: ${saltadas} productos salieron con su pieza anterior`);
 
-  const filas = res.filter(Boolean).map(t => ({ ...t.fila, _img: t.archivo, _firma: t.firma, _pf: t.pf }));
+  if (originales) await progreso(`${originales} productos salen con su foto original (sin marco) hasta la próxima corrida`);
+  const filas = res.filter(Boolean).map(t => t.original ? { ...t.fila, _orig: t.original } : { ...t.fila, _img: t.archivo, _firma: t.firma, _pf: t.pf });
   if (!filas.length) throw new Error('Ningún producto quedó apto: ' + JSON.stringify(fuera) + ' (revisa fotos, precio y link)');
   await progreso(`Escribiendo el CSV: ${filas.length} productos, ${dibujadas} piezas nuevas`);
-  const cuerpo = { filas, leidos: prods.length, fuera, atrasadas, dibujadas };
+  const cuerpo = { filas, leidos: prods.length, fuera, atrasadas, dibujadas, originales };
   // Repartido: cada parte deja sus filas y el CSV lo arma después el paso de unir (app/publica.js --unir).
   const ruta = repartido ? `/publicar/auto-parte${q}&parte=${parte}` : '/publicar/auto-feed' + q;
   const r = await pedir(ruta, json(cuerpo));

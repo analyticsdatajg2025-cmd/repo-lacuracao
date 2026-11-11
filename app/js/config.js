@@ -26,7 +26,7 @@ export const fmtFondo = pl => {
 // Formatos disponibles para una plantilla: los fijos y, si tiene fondo propio, el suyo.
 export const formatos = pl => { const f = fmtFondo(pl); return f ? [...FORMATOS, f] : [...FORMATOS]; };
 
-// C{AAMM}_{NOMBRE}_{ANUNCIANTE}, ver CLAUDE.md §4. Nunca se falsea.
+// C{AAMM}_{NOMBRE}_{ANUNCIANTE}, ver docs/contexto.md §4. Nunca se falsea.
 // El segmento del anunciante es opcional **a propósito**: las campañas propias del grupo no
 // tienen anunciante y obligarlas a llevar uno sería inventarlo (§4: estos ids no se falsean).
 // «+ Nueva campaña» sí lo pide aparte para que nunca acabe pegado dentro del nombre.
@@ -41,7 +41,22 @@ export const MARCAS_INFO = [
   { n: 'Financiera Efectiva', c: 'FE', x: '#22c55e' },
   { n: 'Juntoz', c: 'JZ', x: '#a855f7' },
 ];
+
 export const MARCAS = MARCAS_INFO.map(m => m.n);
+
+// Dónde está el logo de cada marca del grupo en su propia web (Biblioteca de marca › «Traer de su web»).
+// Se baja por el proxy (dominios de PERMITIDOS) y se guarda en `marcas_estilo` como si se hubiera
+// subido. Solo las webs que se pudieron leer (2026-10-07); las demás se suben a mano y se dice «falta».
+export const LOGOS_WEB = {
+  'Tiendas EFE': [
+    { url: 'https://www.efe.com.pe/static/frontend/Grupoefe/default/es_PE/images/logo-efe-160.png', n: 'Cabecera de la web (azul, PNG 160 px)' },
+    { url: 'https://www.efe.com.pe/media/wysiwyg/footer/logo_footer.png', n: 'Pie de la web (redondo azul, PNG 178 px)' },
+  ],
+  'La Curacao': [
+    { url: 'https://www.lacuracao.pe/static/frontend/Grupoefe/lco/es_PE/images/logo.svg', n: 'Cabecera de la web (vector negro de un color)' },
+    { url: 'https://www.lacuracao.pe/media/wysiwyg/lco/footer/logo.png', n: 'Pie de la web (amarillo con .pe, PNG 265 px)' },
+  ],
+};
 // Marca con la que se está trabajando (selector al pie del menú). '' = todas.
 // Marca de trabajo. Se valida contra MARCAS: si quedó guardada una marca retirada, el menú la
 // pinta como «Todas las marcas» pero las pantallas seguirían filtrando por ella y no se vería

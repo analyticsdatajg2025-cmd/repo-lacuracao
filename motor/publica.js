@@ -152,9 +152,10 @@ async function main() {
   if (PARTE >= DE) throw new Error(`--parte ${PARTE} no existe con --de ${DE}`);
   fs.mkdirSync(dirSlug(slug), { recursive: true });
 
+  const paso = UNIR ? 'Unir' : DE > 1 ? `Parte ${PARTE} de ${DE}` : 'Corrida completa';
   const srv = await levantarServidor();
   let r;
-  try {
+  try { try {
     const { ftp_url: _f, ...est } = await pedir('/publicar/estado');
     if (!est.pages_url) throw new Error('Falta PAGES_URL: la raíz pública del repo (en Actions sale sola del repo)');
     PUBLICA = est.pages_url;
@@ -171,8 +172,16 @@ async function main() {
       if (!REPARTIDO) r = { ...r, ...cerrarEstado(slug) };
     }
   } finally { srv.kill(); }
+  } catch (e) {
+    // La corrida que falla también queda en el log del feed (con su motivo): así el panel sabe desde
+    // cuándo está roto y por qué. El CSV publicado no se toca: Meta sigue leyendo el anterior.
+    if (UNIR || !REPARTIDO) {
+      try { escribirPaginas(PAGES, slug, PUBLICA ? PUBLICA + '/' + slug + '/feed.csv' : '', process.env.GITHUB_REPOSITORY || '', { error: String(e.message || e).slice(0, 300), paso }); }
+      catch { /* sin log no se tapa el error de verdad */ }
+    }
+    throw e;
+  }
 
-  const paso = UNIR ? 'Unir' : DE > 1 ? `Parte ${PARTE} de ${DE}` : 'Corrida completa';
   // Log de cambios en la propia URL del feed: historial.json + index.html + portada del repo.
   // Solo lo escribe quien cierra la corrida (unir, o la corrida completa sin reparto). OJO con
   // `DE === 1`: el workflow siempre pasa `--parte`, asi que un feed de una sola parte entraba aqui
@@ -180,7 +189,8 @@ async function main() {
   if (UNIR || !REPARTIDO) {
     try {
       const paginas = escribirPaginas(PAGES, slug, PUBLICA + '/' + slug + '/feed.csv', process.env.GITHUB_REPOSITORY || '',
-        { productos: r.productos, nuevas: r.nuevas, reusadas: r.reusadas, retiradas: r.retiradas, borradas: r.borradas, paso });
+        { productos: r.productos, nuevas: r.nuevas, reusadas: r.reusadas, retiradas: r.retiradas, borradas: r.borradas, paso,
+          leidos: r.leidos, fuera: r.fuera }); // leídos del feed y cuántos se quitaron por motivo
       decir(slug, `Log de cambios al día (${paginas} corridas guardadas)`);
     } catch (e) { decir(slug, 'No se pudo escribir el log de cambios: ' + e.message); }
   }
