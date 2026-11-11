@@ -1,0 +1,19 @@
+[
+ {
+  "cuando": "2026-11-11T15:16:36.007Z",
+  "productos": 17713,
+  "nuevas": 17711,
+  "reusadas": 0,
+  "retiradas": 0,
+  "borradas": 0,
+  "paso": "Unir",
+  "leidos": 17831,
+  "fuera": {
+   "sin foto": 78,
+   "sin precio": 40,
+   "sin link": 0,
+   "repetidos": 0,
+   "pendientes": 0
+  }
+ }
+]
