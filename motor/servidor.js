@@ -35,7 +35,10 @@ const CABECERAS = {
 };
 async function traer(destino) {
   const ctl = new AbortController();
-  let reloj = setTimeout(() => ctl.abort(new Error('el sitio no respondió en 60 s')), 60000);
+  // Un feed grande puede tardar en empezar a responder mientras la tienda lo regenera (el de lacuracao
+  // pasó los 60 s el 2026-11-12 y la corrida entera cayó): 4 min para feeds, 60 s para fotos.
+  const espera = /\.(jpe?g|png|webp|gif)(\?|$)/i.test(destino) ? 60000 : 240000;
+  let reloj = setTimeout(() => ctl.abort(new Error(`el sitio no respondió en ${espera / 1000} s`)), espera);
   try {
     // Redirecciones a mano: cada salto tiene que seguir dentro de PERMITIDOS.
     let r, url = destino;
@@ -62,8 +65,24 @@ async function traer(destino) {
 const NUBE = /^https:\/\/[\w.-]+\/proxy$/.test(process.env.PROXY_NUBE || '') ? process.env.PROXY_NUBE : '';
 let directasMalas = 0;
 const esFoto = u => /\.(jpe?g|png|webp|gif)(\?|$)/i.test(u);
+// Lo mismo para el feed: el 2026-11-12 una de las 8 partes recibió una página de error HTML de la tienda
+// en vez del CSV (su WAF cortó esa máquina) y la corrida entera cayó. Si el feed no llega bien directo
+// (error, o una página HTML donde va un CSV/TXT), se pide una vez por la nube.
+const esPaginaHtml = buf => /^\s*(<!doctype html|<html|<head|<body|<HTML>)/i.test(buf.subarray(0, 300).toString('utf8'));
+async function traerFeed(destino) {
+  let motivo = '';
+  try {
+    const r = await traer(destino);
+    if (r.ok && !esPaginaHtml(r.buf)) return r;
+    motivo = r.ok ? 'la tienda devolvió una página HTML' : 'la tienda respondió ' + r.status;
+  } catch (e) { motivo = e.message; }
+  if (!NUBE) throw new Error(motivo);
+  console.log(`  Feed directo falló (${motivo}): se pide por la nube`);
+  return traer(NUBE + '?url=' + encodeURIComponent(destino));
+}
 async function traerFoto(destino) {
-  if (!NUBE || !esFoto(destino)) return traer(destino);
+  if (!NUBE) return traer(destino);
+  if (!esFoto(destino)) return traerFeed(destino);
   if (directasMalas < 5) {
     try {
       const r = await traer(destino);

@@ -231,7 +231,9 @@ jobs:
               echo "Push rechazado (intento $intento); me reengancho a lo que hay en GitHub"
               sleep $((intento * 10))
               git fetch origin "${GITHUB_REF_NAME}"
-              git rebase "origin/${GITHUB_REF_NAME}" || { git rebase --abort || true; git reset --hard "origin/${GITHUB_REF_NAME}"; return 1; }
+              # --autostash: quedan tandas sin agregar todavía. -X theirs: si el respaldo sin marco llegó
+              # mientras tanto, gana lo de esta corrida (el feed con marco y precios de hoy).
+              git rebase --autostash -X theirs "origin/${GITHUB_REF_NAME}" || { git rebase --abort || true; git reset --hard "origin/${GITHUB_REF_NAME}"; return 1; }
             done
             echo "No se pudo empujar despues de 5 intentos"; return 1
           }
@@ -274,6 +276,7 @@ jobs:
             motor/*
             docs/*/*/historial.json
             docs/*/*/feed.csv
+            docs/*/*/estado.json
           sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:
@@ -292,6 +295,6 @@ jobs:
           git commit -m "Respaldo sin marco: $(TZ=America/Lima date '+%Y-%m-%d %H:%M') (Lima)"
           for intento in 1 2 3 4 5; do
             git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
-            sleep $((intento * 10)); git pull -q --rebase origin "${GITHUB_REF_NAME}" || true
+            sleep $((intento * 10)); git pull -q --rebase --autostash origin "${GITHUB_REF_NAME}" || true
           done
           exit 1

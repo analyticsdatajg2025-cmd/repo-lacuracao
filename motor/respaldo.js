@@ -1,8 +1,10 @@
-// Respaldo sin marco: si una corrida falló, la URL del feed no puede quedarse con datos viejos ni vacía.
+// Respaldo: si una corrida falló, la URL del feed no puede quedarse con datos viejos ni vacía.
 // Para cada feed de la corrida cuyo último registro en historial.json es un error (o no es de esta
 // corrida), se escribe docs/<tienda>/<nombre>/feed.csv con el feed de la tienda TAL CUAL: mismos
-// productos, precios y textos, y la foto original de la tienda (sin marco). No toca estado.json ni las
-// piezas: la próxima corrida buena vuelve a publicar las imágenes con marco en la misma URL.
+// productos, precios y textos. Cada producto conserva su pieza con marco si ya hay una que muestra su
+// precio de hoy (estado.json guarda la huella del precio de cada pieza); solo los que cambiaron de precio
+// o son nuevos salen con la foto original de la tienda. No toca estado.json ni las piezas: la próxima
+// corrida buena vuelve a dibujar lo que falte.
 // Uso: node motor/respaldo.js tienda/nombre [...]   (lo llama auto/publica.yml si «dibujar» o «unir» fallan)
 'use strict';
 const fs = require('fs');
@@ -18,6 +20,15 @@ const VENTANA_MS = 3 * 3600e3; // una corrida sana (dibujar + unir) dura menos d
 const CABECERAS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Accept': '*/*' };
 const esc = v => { const s = v == null ? '' : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
 const leerJson = (f, def) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return def; } };
+const crypto = require('crypto');
+// Misma huella del precio que app/js/auto.js (pf): sha256 de [precio, precio anterior], 16 caracteres.
+const huella = p => crypto.createHash('sha256').update(JSON.stringify([p.price, p.oldPrice])).digest('hex').slice(0, 16);
+function raizPages(slug) {
+  const r = String(process.env.PAGES_URL || '').replace(/\/+$/, '');
+  if (r) return r + '/' + slug;
+  const [o, n] = String(process.env.GITHUB_REPOSITORY || '/').split('/');
+  return o && n ? `https://${o.toLowerCase()}.github.io/${n}/${slug}` : '';
+}
 
 async function bajar(url) {
   const nube = /^https:\/\/[\w.-]+\/proxy$/.test(process.env.PROXY_NUBE || '') ? process.env.PROXY_NUBE : '';
@@ -39,12 +50,15 @@ async function respaldo(slug, feeds) {
   const receta = leerJson(path.join(process.env.RECETAS_DIR || path.join(RAIZ, 'auto', 'recetas'), slug + '.json'), null);
   if (!receta || !receta.feed_url) throw new Error(`${slug}: no hay receta`);
   const prods = feeds.parsear(await bajar(receta.feed_url));
+  const estado = leerJson(path.join(dir, 'estado.json'), {}).productos || {}, raiz = raizPages(slug);
   const lineas = [COLS.join(',')];
-  let n = 0;
+  let n = 0, conMarco = 0;
   for (const p of prods) {
     if (!p.image || !(p.price?.v > 0) || !/^https?:\/\//.test(p.link || '')) continue;
     const { fila } = feeds.filaMeta(p);
-    fila.image_link = p.image;
+    const v = estado[fila.id];
+    if (raiz && v && v[1] && v[2] === huella(p)) { fila.image_link = raiz + '/img/' + v[1]; conMarco++; }
+    else fila.image_link = p.image;
     lineas.push(COLS.map(c => esc(fila[c])).join(','));
     n++;
   }
@@ -52,9 +66,9 @@ async function respaldo(slug, feeds) {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'feed.csv'), '﻿' + lineas.join('\n') + '\n');
   const motivo = ult && ult.error ? String(ult.error).slice(0, 300) : 'la corrida no terminó';
-  hist.unshift({ cuando: new Date().toISOString(), productos: n, nuevas: 0, reusadas: 0, retiradas: 0, paso: 'Respaldo sin marco', respaldo: true, motivo });
+  hist.unshift({ cuando: new Date().toISOString(), productos: n, nuevas: 0, reusadas: conMarco, originales: n - conMarco, retiradas: 0, paso: 'Respaldo', respaldo: true, motivo });
   fs.writeFileSync(path.join(dir, 'historial.json'), JSON.stringify(hist.slice(0, 60), null, 1));
-  console.log(`${slug}: respaldo publicado con ${n} productos y fotos originales (motivo: ${motivo})`);
+  console.log(`${slug}: respaldo publicado con ${n} productos: ${conMarco} con su pieza con marco y ${n - conMarco} con la foto original (motivo: ${motivo})`);
 }
 
 (async () => {
