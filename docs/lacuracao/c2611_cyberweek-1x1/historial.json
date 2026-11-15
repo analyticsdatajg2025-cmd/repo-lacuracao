@@ -1,5 +1,22 @@
 [
  {
+  "cuando": "2026-11-15T07:26:50.870Z",
+  "productos": 17598,
+  "nuevas": 78,
+  "reusadas": 17520,
+  "retiradas": 1097,
+  "borradas": 26,
+  "paso": "Unir",
+  "leidos": 17717,
+  "fuera": {
+   "sin foto": 79,
+   "sin precio": 40,
+   "sin link": 0,
+   "repetidos": 0,
+   "pendientes": 0
+  }
+ },
+ {
   "cuando": "2026-11-15T00:36:51.854Z",
   "productos": 17606,
   "nuevas": 1,
