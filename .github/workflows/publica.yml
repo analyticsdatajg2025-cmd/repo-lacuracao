@@ -174,13 +174,22 @@ jobs:
         run: sudo apt-get install -y -qq fonts-liberation > /dev/null
       # Caché de fotos originales (I-13): cada parte guarda las fotos que bajó y la próxima corrida las
       # reusa, así un cambio de marco no le vuelve a pedir 17 mil fotos a la tienda (motor/servidor.js).
+      # La clave es por TIENDA, no por receta: las fotos son las mismas aunque el marco o el nombre del
+      # feed cambien, así un feed nuevo arranca con la caché llena. La segunda clave rescata las cachés
+      # que se guardaron por receta antes de este cambio.
+      - name: Clave de la caché
+        id: clave
+        env:
+          SLUG: ${{ matrix.tarea.slug }}
+        run: echo "tienda=${SLUG%%/*}" >> "$GITHUB_OUTPUT"
       - name: Fotos ya bajadas antes
         id: fotos
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/fotos
-          key: fotos-${{ matrix.tarea.slug }}-${{ matrix.tarea.de }}-${{ matrix.tarea.parte }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: fotos-${{ steps.clave.outputs.tienda }}-${{ matrix.tarea.de }}-${{ matrix.tarea.parte }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            fotos-${{ steps.clave.outputs.tienda }}-${{ matrix.tarea.de }}-${{ matrix.tarea.parte }}-
             fotos-${{ matrix.tarea.slug }}-${{ matrix.tarea.de }}-${{ matrix.tarea.parte }}-
       - name: Contar la caché
         run: echo "ANTES=$(ls '${{ runner.temp }}/fotos' 2>/dev/null | wc -l)" >> "$GITHUB_ENV"
@@ -190,11 +199,19 @@ jobs:
           # Si la tienda corta las fotos a esta máquina, se piden por la nube del sistema (motor/servidor.js).
           PROXY_NUBE: https://mkt-sistemas.analytics-data-jg-2025.workers.dev/proxy
           FOTOS_CACHE: ${{ runner.temp }}/fotos
+          # Tope de la nube (I-15): 1.500 intentos por corrida entre todas las partes. La nube es el mismo
+          # Worker que la app y el plan gratuito de Cloudflare da 100.000 consultas al día.
+          TOPE_NUBE_CORRIDA: 1500
+          DE: ${{ matrix.tarea.de }}
         run: |
+          export FOTOS_NUBE_MAX=$(( TOPE_NUBE_CORRIDA / (DE > 0 ? DE : 1) ))
           # Solo dígitos: lo que se escribe en el formulario nunca entra crudo en la línea de comandos.
-          # --plazo 38: la parte deja de dibujar a los 38 min y entrega lo hecho (el job muere a los 45).
+          # --plazo 20: la parte deja de dibujar a los 20 min y entrega lo hecho. Lo que faltó sale con su
+          # pieza anterior (mismo precio) o con la foto original, el feed se publica, y el repaso automático
+          # (reintenta.yml) sigue con lo pendiente en otras máquinas. Mejor publicar a los ~25 min y
+          # completar por tandas que esperar 45 min por una máquina lenta (I-11, I-15).
           LIM=$(printf '%s' "$LIMITE" | tr -cd '0-9')
-          node motor/publica.js "${{ matrix.tarea.slug }}" --parte ${{ matrix.tarea.parte }} --de ${{ matrix.tarea.de }} --plazo 38 ${LIM:+--limite $LIM}
+          node motor/publica.js "${{ matrix.tarea.slug }}" --parte ${{ matrix.tarea.parte }} --de ${{ matrix.tarea.de }} --plazo 20 ${LIM:+--limite $LIM}
       - name: Podar la caché (fotos de más de 30 días) y ver si creció
         if: always()
         run: |
@@ -207,7 +224,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/fotos
-          key: fotos-${{ matrix.tarea.slug }}-${{ matrix.tarea.de }}-${{ matrix.tarea.parte }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: fotos-${{ steps.clave.outputs.tienda }}-${{ matrix.tarea.de }}-${{ matrix.tarea.parte }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Guardar lo dibujado para el paso de unir
         # OJO con README.md: upload-artifact recorta la carpeta común de lo que sube. Sin un archivo
         # de la raíz, docs/<tienda>/<nombre>/ se pierde y al bajarlo las partes caen fuera de docs/.

@@ -115,33 +115,53 @@ async function medir(url, cual) {
   if (cual === 'directo') msDirecto = media(msDirecto, Date.now() - t0); else msNube = media(msNube, Date.now() - t0);
   return r;
 }
+// Tope de la nube (I-15, 2026-11-16): la nube es el mismo Worker que la app, y el plan gratuito de
+// Cloudflare da 100.000 consultas al día. Un cambio de marco con la tienda cortando mandó decenas de
+// miles de fotos por ahí y agotó la cuota. Cada parte tiene un cupo (FOTOS_NUBE_MAX, lo reparte
+// publica.yml: 1.500 por corrida entre todas las partes) y cada intento cuenta, salga bien o mal. Si la
+// tienda también corta a la nube (5 fallas seguidas), se deja de usar en esta parte. Sin nube, la
+// foto que falla directo la resuelve app/js/auto.js: pieza anterior si el precio es el mismo, o la foto
+// original con el precio de hoy, y el repaso automático la vuelve a intentar desde otra máquina.
+const NUBE_MAX = Number.isFinite(Number(process.env.FOTOS_NUBE_MAX)) && process.env.FOTOS_NUBE_MAX !== '' ? Number(process.env.FOTOS_NUBE_MAX) : 100;
+let nubeUsadas = 0, nubeMalas = 0, avisoNube = '';
+function nubeDisponible() {
+  if (!NUBE) return false;
+  const motivo = nubeUsadas >= NUBE_MAX ? `se usó el cupo de la nube (${NUBE_MAX} fotos)` : nubeMalas >= 5 ? 'la nube también falla (5 seguidas)' : '';
+  if (motivo && !avisoNube) { avisoNube = motivo; console.log(`  Nube apagada en esta parte: ${motivo}. Sigue solo directo.`); }
+  return !motivo;
+}
 async function traerFoto(destino) {
   if (!esFoto(destino)) return NUBE ? traerFeed(destino) : traer(destino);
   const c = leerCache(destino);
   if (c) { stats.cache++; return c; }
   let r = null;
-  if (!NUBE) r = await medir(destino, 'directo');
-  else {
-    const lenta = msDirecto > LENTA_MS && (!msNube || msNube < msDirecto);
-    const probar = ++desdePrueba >= 40;
-    if (lenta && !avisoLenta) { avisoLenta = true; console.log(`  Fotos directas lentas (${Math.round(msDirecto)} ms c/u): se piden por la nube`); }
-    if (directasMalas < 5 && (!lenta || probar)) {
-      if (probar) desdePrueba = 0;
-      try {
-        const d = await medir(destino, 'directo');
-        if (d.ok && d.tipo.startsWith('image/')) { directasMalas = 0; r = d; stats.directo++; }
-      } catch { /* se intenta por la nube */ }
-      if (!r) directasMalas++;
-    }
-    if (!r) {
-      r = await medir(NUBE + '?url=' + encodeURIComponent(destino), 'nube');
-      if (r.ok) stats.nube++;
-    }
+  const nube = nubeDisponible();
+  const lenta = nube && msDirecto > LENTA_MS && (!msNube || msNube < msDirecto);
+  const probar = ++desdePrueba >= 40;
+  if (lenta && !avisoLenta) { avisoLenta = true; console.log(`  Fotos directas lentas (${Math.round(msDirecto)} ms c/u): se piden por la nube`); }
+  // Directo siempre, salvo que la nube esté disponible y directo venga fallando o lento; cada 40 fotos
+  // se vuelve a probar directo igual, por si la tienda ya soltó a esta máquina.
+  if (!nube || probar || (directasMalas < 5 && !lenta)) {
+    if (probar) desdePrueba = 0;
+    try {
+      const d = await medir(destino, 'directo');
+      if (d.ok && d.tipo.startsWith('image/')) { directasMalas = 0; r = d; stats.directo++; }
+      else if (!nube) r = d;
+    } catch (e) { if (!nube) throw e; }
+    if (!r || !r.ok) directasMalas++;
   }
+  if ((!r || !r.ok) && nubeDisponible()) {
+    nubeUsadas++;
+    try {
+      const n = await medir(NUBE + '?url=' + encodeURIComponent(destino), 'nube');
+      if (n.ok && n.tipo.startsWith('image/')) { nubeMalas = 0; stats.nube++; r = n; } else { nubeMalas++; r = r || n; }
+    } catch (e) { nubeMalas++; if (!r) throw e; }
+  }
+  if (!r) throw new Error('la foto no bajó directo y la nube no está disponible');
   guardarCache(destino, r);
   return r;
 }
-const resumenFotos = () => { if (stats.cache + stats.directo + stats.nube) console.log(`  Fotos: ${stats.cache} de la caché, ${stats.directo} directas, ${stats.nube} por la nube`); };
+const resumenFotos = () => { if (stats.cache + stats.directo + stats.nube) console.log(`  Fotos: ${stats.cache} de la caché, ${stats.directo} directas, ${stats.nube} por la nube (${nubeUsadas} de ${NUBE_MAX} intentos de nube usados)`); };
 process.on('exit', resumenFotos);
 process.on('SIGTERM', () => process.exit(0)); // publica.js cierra el servidor así: que igual deje el resumen
 
