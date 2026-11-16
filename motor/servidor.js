@@ -80,18 +80,70 @@ async function traerFeed(destino) {
   console.log(`  Feed directo falló (${motivo}): se pide por la nube`);
   return traer(NUBE + '?url=' + encodeURIComponent(destino));
 }
-async function traerFoto(destino) {
-  if (!NUBE) return traer(destino);
-  if (!esFoto(destino)) return traerFeed(destino);
-  if (directasMalas < 5) {
-    try {
-      const r = await traer(destino);
-      if (r.ok && r.tipo.startsWith('image/')) { directasMalas = 0; return r; }
-    } catch { /* se intenta por la nube */ }
-    directasMalas++;
-  }
-  return traer(NUBE + '?url=' + encodeURIComponent(destino));
+// Caché de fotos originales en disco (I-13, 2026-11-16): en un cambio de marco se redibuja todo el
+// catálogo, y bajar 17 mil fotos de golpe hizo que la tienda cortara las descargas. Con FOTOS_CACHE
+// (lo restaura publica.yml con actions/cache, una carpeta por parte) cada foto se baja una sola vez y
+// se reusa hasta 30 días; un cambio de marco ya casi no le pide nada a la tienda. La clave es la URL:
+// Magento cambia el nombre del archivo cuando cambia la foto.
+const crypto = require('crypto');
+const CACHE = process.env.FOTOS_CACHE || '';
+const VIDA_CACHE = 30 * 86400e3;
+const enCache = u => path.join(CACHE, crypto.createHash('sha1').update(u).digest('hex'));
+function leerCache(u) {
+  if (!CACHE) return null;
+  try {
+    const f = enCache(u), st = fs.statSync(f + '.img');
+    if (Date.now() - st.mtimeMs > VIDA_CACHE) return null;
+    return { status: 200, ok: true, tipo: fs.readFileSync(f + '.tipo', 'utf8') || 'image/jpeg', buf: fs.readFileSync(f + '.img') };
+  } catch { return null; }
 }
+function guardarCache(u, r) {
+  if (!CACHE || !r.ok || !r.tipo.startsWith('image/') || !r.buf.length) return;
+  try { fs.mkdirSync(CACHE, { recursive: true }); const f = enCache(u); fs.writeFileSync(f + '.img', r.buf); fs.writeFileSync(f + '.tipo', r.tipo); } catch { /* sin caché igual funciona */ }
+}
+const stats = { cache: 0, directo: 0, nube: 0 };
+
+// Máquina lenta (I-11, 2026-11-15): a algunas IP de GitHub la tienda les entrega cada foto en ~4 s
+// en vez de 0,1 s, sin llegar a fallar, y esa parte tarda 30+ min. Se mide cuánto tarda cada foto
+// directa (promedio móvil); si pasa de 1,5 s se piden por la nube, y cada 40 fotos se vuelve a probar
+// directo por si la tienda ya respondió normal.
+const LENTA_MS = Number(process.env.FOTOS_LENTA_MS) || 1500;
+let msDirecto = 0, msNube = 0, desdePrueba = 0, avisoLenta = false;
+const media = (m, x) => m ? m * 0.8 + x * 0.2 : x;
+async function medir(url, cual) {
+  const t0 = Date.now(), r = await traer(url);
+  if (cual === 'directo') msDirecto = media(msDirecto, Date.now() - t0); else msNube = media(msNube, Date.now() - t0);
+  return r;
+}
+async function traerFoto(destino) {
+  if (!esFoto(destino)) return NUBE ? traerFeed(destino) : traer(destino);
+  const c = leerCache(destino);
+  if (c) { stats.cache++; return c; }
+  let r = null;
+  if (!NUBE) r = await medir(destino, 'directo');
+  else {
+    const lenta = msDirecto > LENTA_MS && (!msNube || msNube < msDirecto);
+    const probar = ++desdePrueba >= 40;
+    if (lenta && !avisoLenta) { avisoLenta = true; console.log(`  Fotos directas lentas (${Math.round(msDirecto)} ms c/u): se piden por la nube`); }
+    if (directasMalas < 5 && (!lenta || probar)) {
+      if (probar) desdePrueba = 0;
+      try {
+        const d = await medir(destino, 'directo');
+        if (d.ok && d.tipo.startsWith('image/')) { directasMalas = 0; r = d; stats.directo++; }
+      } catch { /* se intenta por la nube */ }
+      if (!r) directasMalas++;
+    }
+    if (!r) {
+      r = await medir(NUBE + '?url=' + encodeURIComponent(destino), 'nube');
+      if (r.ok) stats.nube++;
+    }
+  }
+  guardarCache(destino, r);
+  return r;
+}
+const resumenFotos = () => { if (stats.cache + stats.directo + stats.nube) console.log(`  Fotos: ${stats.cache} de la caché, ${stats.directo} directas, ${stats.nube} por la nube`); };
+process.on('exit', resumenFotos);
+process.on('SIGTERM', () => process.exit(0)); // publica.js cierra el servidor así: que igual deje el resumen
 
 async function proxy(req, res, destino) {
   if (!permitido(destino)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Dominio no permitido'); }

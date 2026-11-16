@@ -172,16 +172,42 @@ jobs:
           node-version: 20
       - name: Fuentes (Arial se reemplaza por Liberation Sans, de las mismas medidas)
         run: sudo apt-get install -y -qq fonts-liberation > /dev/null
+      # Caché de fotos originales (I-13): cada parte guarda las fotos que bajó y la próxima corrida las
+      # reusa, así un cambio de marco no le vuelve a pedir 17 mil fotos a la tienda (motor/servidor.js).
+      - name: Fotos ya bajadas antes
+        id: fotos
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/fotos
+          key: fotos-${{ matrix.tarea.slug }}-${{ matrix.tarea.de }}-${{ matrix.tarea.parte }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            fotos-${{ matrix.tarea.slug }}-${{ matrix.tarea.de }}-${{ matrix.tarea.parte }}-
+      - name: Contar la caché
+        run: echo "ANTES=$(ls '${{ runner.temp }}/fotos' 2>/dev/null | wc -l)" >> "$GITHUB_ENV"
       - name: Dibujar
         env:
           LIMITE: ${{ github.event.inputs.limite }}
           # Si la tienda corta las fotos a esta máquina, se piden por la nube del sistema (motor/servidor.js).
           PROXY_NUBE: https://mkt-sistemas.analytics-data-jg-2025.workers.dev/proxy
+          FOTOS_CACHE: ${{ runner.temp }}/fotos
         run: |
           # Solo dígitos: lo que se escribe en el formulario nunca entra crudo en la línea de comandos.
           # --plazo 38: la parte deja de dibujar a los 38 min y entrega lo hecho (el job muere a los 45).
           LIM=$(printf '%s' "$LIMITE" | tr -cd '0-9')
           node motor/publica.js "${{ matrix.tarea.slug }}" --parte ${{ matrix.tarea.parte }} --de ${{ matrix.tarea.de }} --plazo 38 ${LIM:+--limite $LIM}
+      - name: Podar la caché (fotos de más de 30 días) y ver si creció
+        if: always()
+        run: |
+          d='${{ runner.temp }}/fotos'; [ -d "$d" ] || exit 0
+          find "$d" -type f -mtime +30 -delete
+          despues=$(ls "$d" | wc -l); echo "Caché de fotos: $ANTES archivos antes, $despues después"
+          [ "$despues" -gt "${ANTES:-0}" ] && echo "GUARDAR_FOTOS=si" >> "$GITHUB_ENV" || true
+      - name: Guardar las fotos para la próxima corrida
+        if: always() && env.GUARDAR_FOTOS == 'si'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/fotos
+          key: fotos-${{ matrix.tarea.slug }}-${{ matrix.tarea.de }}-${{ matrix.tarea.parte }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Guardar lo dibujado para el paso de unir
         # OJO con README.md: upload-artifact recorta la carpeta común de lo que sube. Sin un archivo
         # de la raíz, docs/<tienda>/<nombre>/ se pierde y al bajarlo las partes caen fuera de docs/.
