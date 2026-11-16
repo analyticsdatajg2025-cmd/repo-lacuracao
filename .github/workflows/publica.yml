@@ -85,6 +85,9 @@ jobs:
                 const p = JSON.parse(fs.readFileSync("auto/ahora.json", "utf8"));
                 const t = Date.parse(p.pedido);
                 if (Array.isArray(p.slugs) && p.slugs.length && t && Date.now() - t < 6 * 3600e3) ahora = new Set(p.slugs);
+                // `auto`: lo empujó el reloj de la nube por una hora vencida. Si el cron de GitHub ya la
+                // publicó, esta corrida no dibuja nada (abajo se vuelve a exigir que esté vencida).
+                if (ahora && p.auto) ahora.auto = true;
               } catch { /* sin pedido: no corre nada */ }
               if (!ahora) console.log("El empujón no trae ningún pedido vigente en auto/ahora.json");
             }
@@ -114,7 +117,10 @@ jobs:
                 const slug = t.name + "/" + f.slice(0, -5);
                 let r; try { r = JSON.parse(fs.readFileSync(path.join(raiz, t.name, f), "utf8")); } catch { continue; }
                 if (manual) { if (slug !== manual) continue; }
-                else if (process.env.EVENTO === "push") { if (!ahora || !ahora.has(slug)) continue; }
+                else if (process.env.EVENTO === "push") {
+                  if (!ahora || !ahora.has(slug)) continue;
+                  if (ahora.auto && !vencida(slug, Array.isArray(r.horas) && r.horas.length ? r.horas : ["07:00", "15:00"])) continue;
+                }
                 else {
                   if (r.activo === false) continue;
                   const horas = Array.isArray(r.horas) && r.horas.length ? r.horas : ["07:00", "15:00"];
