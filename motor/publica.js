@@ -190,7 +190,10 @@ async function main() {
     try {
       const paginas = escribirPaginas(PAGES, slug, PUBLICA + '/' + slug + '/feed.csv', process.env.GITHUB_REPOSITORY || '',
         { productos: r.productos, nuevas: r.nuevas, reusadas: r.reusadas, retiradas: r.retiradas, borradas: r.borradas, paso,
-          leidos: r.leidos, fuera: r.fuera }); // leídos del feed y cuántos se quitaron por motivo
+          leidos: r.leidos, fuera: r.fuera, // leídos del feed y cuántos se quitaron por motivo
+          // Pendientes de redibujar: con pieza vieja (marco o precio anterior) o con su foto original.
+          // reintenta.yml los mira y lanza un repaso sin esperar a la próxima hora.
+          atrasadas: r.atrasadas || 0, originales: r.originales || 0 });
       decir(slug, `Log de cambios al día (${paginas} corridas guardadas)`);
     } catch (e) { decir(slug, 'No se pudo escribir el log de cambios: ' + e.message); }
   }

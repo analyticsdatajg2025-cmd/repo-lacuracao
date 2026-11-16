@@ -13,6 +13,9 @@
 #
 # Antes de la primera corrida: Settings > Pages > Source: Deploy from a branch, Branch: main, carpeta /docs.
 name: Feeds a Pages
+# Los repasos automáticos (reintenta.yml) se ven en la lista como «Repaso N: tienda/nombre»; reintenta.yml
+# cuenta con ese título cuántos van, para no reintentar para siempre.
+run-name: "${{ github.event.inputs.repaso && format('Repaso {0}: {1}', github.event.inputs.repaso, github.event.inputs.slug) || 'Feeds a Pages' }}"
 
 on:
   schedule:
@@ -38,10 +41,14 @@ on:
       limite:
         description: 'solo los primeros N productos (vacío = todo el catálogo). Para la primera prueba.'
         required: false
+      repaso:
+        description: 'número de repaso automático (lo pone reintenta.yml; vacío = corrida normal)'
+        required: false
 
 # Para el commit de las piezas alcanza el token que GitHub da solo: no hace falta ningún secreto.
 permissions:
   contents: write
+  actions: read   # el respaldo mira si viene otra corrida
 
 # Nunca dos corridas a la vez sobre el mismo repo: la segunda espera, no pisa.
 concurrency:
@@ -228,6 +235,19 @@ jobs:
           git add -A docs
           git diff --cached --quiet && { echo "Nada cambió"; exit 0; }
           git reset -q
+          # Lo que esta corrida escribió fuera de img/ (feed.csv, historial.json, estado.json, index.html)
+          # se guarda aparte. Si mientras subimos las fotos llega otro commit que toca esos archivos (el
+          # respaldo de una corrida cancelada, 2026-11-15), el autostash choca y antes se perdía la
+          # corrida entera: ahora el choque se resuelve con nuestra versión, que es la más nueva.
+          FIN="$RUNNER_TEMP/finales"; mkdir -p "$FIN"
+          git ls-files -m -o --exclude-standard -- docs | grep -v '/img/' | while read -r f; do mkdir -p "$FIN/$(dirname "$f")"; cp "$f" "$FIN/$f"; done
+          reponer() {
+            git diff --name-only --diff-filter=U | while read -r f; do
+              if [ -f "$FIN/$f" ]; then cp "$FIN/$f" "$f"; else git checkout --theirs -- "$f" 2>/dev/null || true; fi
+              git reset -q -- "$f"
+            done
+            git stash list | grep -q autostash && git stash drop -q || true
+          }
           # Empujar 15 mil fotos tarda un minuto, y en ese minuto la Fabrica puede haber empujado
           # una receta: GitHub rechaza con «cannot lock ref ... is at X but expected Y» y se perdia
           # la corrida entera. Se reintenta: traer, reponer nuestro commit encima y volver a empujar.
@@ -240,6 +260,7 @@ jobs:
               # --autostash: quedan tandas sin agregar todavía. -X theirs: si el respaldo sin marco llegó
               # mientras tanto, gana lo de esta corrida (el feed con marco y precios de hoy).
               git rebase --autostash -X theirs "origin/${GITHUB_REF_NAME}" || { git rebase --abort || true; git reset --hard "origin/${GITHUB_REF_NAME}"; return 1; }
+              git ls-files -u | grep -q . && { echo "El autostash chocó: gana lo de esta corrida"; reponer; }
             done
             echo "No se pudo empujar despues de 5 intentos"; return 1
           }
@@ -256,6 +277,8 @@ jobs:
             git commit -q -m "Feeds a Pages: fotos, tanda $n"
             empujar || exit 1
           done
+          # Por si algún rebase dejó una versión ajena: el CSV, el historial y el estado son los de esta corrida.
+          (cd "$FIN" && find . -type f) | while read -r f; do cp "$FIN/$f" "${f#./}"; done
           git add -A docs
           git diff --cached --quiet && exit 0
           git commit -m "Feeds a Pages: $(TZ=America/Lima date '+%Y-%m-%d %H:%M') (Lima)"
@@ -291,7 +314,12 @@ jobs:
         env:
           FEEDS: ${{ needs.recetas.outputs.feeds }}
           PROXY_NUBE: https://mkt-sistemas.analytics-data-jg-2025.workers.dev/proxy
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # Si ya hay otra corrida en cola o en curso, ella publica: un respaldo ahora solo chocaría
+          # con su subida (2026-11-15). El feed anterior sigue en la URL mientras tanto.
+          otras=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/publica.yml/runs?per_page=20" --jq "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID} and (.status == \"queued\" or .status == \"in_progress\" or .status == \"pending\" or .status == \"waiting\"))] | length" 2>/dev/null || echo 0)
+          if [ "${otras:-0}" -gt 0 ]; then echo "Hay $otras corrida(s) más nueva(s) en camino: no se publica respaldo"; exit 0; fi
           SLUGS=$(echo "$FEEDS" | node -e 'let t="";process.stdin.on("data",d=>t+=d).on("end",()=>console.log(JSON.parse(t).map(f=>f.slug).join(" ")))')
           node motor/respaldo.js $SLUGS || true
           git config user.name 'github-actions[bot]'

@@ -21,6 +21,7 @@ on:
 
 permissions:
   actions: write
+  contents: read
 
 jobs:
   reintentar:
@@ -45,3 +46,46 @@ jobs:
           # bloqueada por la tienda ya no tumba su parte (js/auto.js sigue con las piezas ya publicadas),
           # asi que esto es solo la red de seguridad. No se pinta la corrida de rojo por eso.
           exit 0
+
+  # Repaso: la corrida terminó bien pero dejó productos sin la pieza de hoy (marco anterior o foto original),
+  # porque una máquina iba lenta, la tienda cortó las fotos o venció el plazo. Antes se esperaba a la
+  # próxima hora programada (2026-11-16: 5.163 productos con el marco viejo durante una hora). Ahora se
+  # relanza solo ese feed, repartido en 16 máquinas, con espera creciente para no castigar a la tienda,
+  # hasta 6 repasos seguidos. Los productos ya dibujados no se repiten: el repaso solo dibuja lo pendiente.
+  repasar:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            docs/*/*/historial.json
+          sparse-checkout-cone-mode: false
+      - name: Lanzar un repaso si quedaron productos pendientes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITULO: ${{ github.event.workflow_run.display_title }}
+          DESDE: ${{ github.event.workflow_run.run_started_at }}
+        run: |
+          n=$(printf '%s' "$TITULO" | sed -n 's/^Repaso \([0-9]*\):.*/\1/p'); n=${n:-0}
+          if [ "$n" -ge 6 ]; then echo "Ya van $n repasos seguidos: se deja para la próxima hora y queda en el reporte"; exit 0; fi
+          # Feeds que esta corrida publicó (entrada «Unir» posterior a su inicio) y siguen con pendientes.
+          node -e '
+            const fs = require("fs"), path = require("path"), desde = Date.parse(process.env.DESDE) || 0;
+            for (const t of fs.existsSync("docs") ? fs.readdirSync("docs") : []) for (const f of fs.readdirSync(path.join("docs", t))) {
+              let h; try { h = JSON.parse(fs.readFileSync(path.join("docs", t, f, "historial.json"), "utf8")); } catch { continue; }
+              h = (Array.isArray(h) ? h : h.corridas || []).slice().sort((a, b) => Date.parse(b.cuando) - Date.parse(a.cuando));
+              const u = h[0]; if (!u || u.paso !== "Unir" || Date.parse(u.cuando) < desde) continue;
+              const pend = (Number(u.atrasadas) || 0) + (Number(u.originales) || 0);
+              if (pend > 0) console.log(t + "/" + f + " " + pend);
+            }' > pendientes.txt
+          if [ ! -s pendientes.txt ]; then echo "Todo con la pieza de hoy: no hace falta repaso"; exit 0; fi
+          espera=$(( (n + 1) * 4 )); [ "$espera" -gt 15 ] && espera=15
+          echo "Pendientes:"; cat pendientes.txt
+          echo "Repaso $((n + 1)) en $espera min (espera para no castigar a la tienda)"; sleep $((espera * 60))
+          while read -r slug pend; do
+            gh workflow run publica.yml --ref "${{ github.event.repository.default_branch }}" -f slug="$slug" -f partes=16 -f repaso=$((n + 1)) \
+              && echo "Repaso $((n + 1)) lanzado para $slug ($pend pendientes)" >> "$GITHUB_STEP_SUMMARY"
+          done < pendientes.txt
