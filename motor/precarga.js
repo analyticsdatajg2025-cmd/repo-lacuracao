@@ -53,20 +53,27 @@ function csv(texto) {
   fs.mkdirSync(CACHE, { recursive: true });
   const faltan = fotos.filter(u => !fs.existsSync(archivo(u) + '.img'));
   console.log(`${slug} parte ${PARTE} de ${DE}: ${fotos.length} fotos, ${fotos.length - faltan.length} ya en caché, ${faltan.length} por bajar`);
-  let i = 0, ok = 0, mal = 0;
+  // Directo primero (la nube sale por IPs de Cloudflare que la tienda limita con 429) y la nube solo si
+  // directo falla. Si fallan 25 seguidas, la tienda está cortando: se para y no se la castiga más.
+  let i = 0, ok = 0, mal = 0, seguidas = 0, directas = 0, nube = 0, cortada = false;
+  async function bajar(u) {
+    const r = await fetch(u, { signal: AbortSignal.timeout(30e3), headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const tipo = r.headers.get('content-type') || '';
+    if (!r.ok || !tipo.startsWith('image/')) throw new Error(String(r.status));
+    return { buf: Buffer.from(await r.arrayBuffer()), tipo };
+  }
   async function hilo() {
-    while (i < faltan.length && Date.now() < PLAZO) {
+    while (i < faltan.length && Date.now() < PLAZO && !cortada) {
       const u = faltan[i++];
       try {
-        const r = await fetch(porNube(u), { signal: AbortSignal.timeout(60e3) });
-        const tipo = r.headers.get('content-type') || '';
-        if (!r.ok || !tipo.startsWith('image/')) throw new Error(String(r.status));
-        const buf = Buffer.from(await r.arrayBuffer()), f = archivo(u);
-        fs.writeFileSync(f + '.img', buf); fs.writeFileSync(f + '.tipo', tipo); ok++;
-      } catch { mal++; await dormir(2000); }
+        let x;
+        try { x = await bajar(u); directas++; } catch { x = await bajar(porNube(u)); nube++; }
+        const f = archivo(u);
+        fs.writeFileSync(f + '.img', x.buf); fs.writeFileSync(f + '.tipo', x.tipo); ok++; seguidas = 0;
+      } catch { mal++; if (++seguidas >= 25) cortada = true; await dormir(2000); }
       await dormir(PAUSA_MS);
     }
   }
   await Promise.all(Array.from({ length: HILOS }, hilo));
-  console.log(`Listo: ${ok} bajadas, ${mal} fallaron, ${faltan.length - ok - mal} quedaron para la próxima`);
+  console.log(`Listo: ${ok} bajadas (${directas} directas, ${nube} por la nube), ${mal} fallaron, ${faltan.length - ok - mal} quedaron para la próxima` + (cortada ? '. La tienda cortó: se paró para no castigarla' : ''));
 })().catch(e => { console.error('ERROR: ' + e.message); process.exit(1); });
