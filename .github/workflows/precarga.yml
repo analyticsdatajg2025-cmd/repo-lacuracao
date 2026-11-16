@@ -1,0 +1,80 @@
+# Precarga de la caché de fotos originales (I-13 de docs/INCIDENTES-FEEDS.md en MKT-SISTEMA).
+# En el repo va como .github/workflows/precarga.yml (lo copia motor/armar-repo.js). Solo a mano, de
+# madrugada: baja despacio, por la nube, las fotos del feed y las deja en la misma caché que usa
+# «dibujar» (misma clave por parte), así el próximo cambio de marco casi no le pide fotos a la tienda.
+# No toca el feed ni el repo.
+name: Precargar fotos
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: 'tienda/nombre'
+        required: true
+      de:
+        description: 'en cuántas partes (el mismo número que usa la receta)'
+        required: true
+        default: '16'
+
+permissions:
+  contents: read
+
+jobs:
+  partes:
+    runs-on: ubuntu-latest
+    outputs:
+      matriz: ${{ steps.m.outputs.matriz }}
+    steps:
+      - id: m
+        env:
+          DE: ${{ github.event.inputs.de }}
+        run: |
+          n=$(printf '%s' "$DE" | tr -cd '0-9'); n=${n:-16}; [ "$n" -gt 20 ] && n=20
+          echo "matriz=$(seq 0 $((n - 1)) | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  precargar:
+    needs: partes
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # Pocas máquinas a la vez: la idea es no castigar a la tienda.
+      max-parallel: 4
+      matrix:
+        parte: ${{ fromJson(needs.partes.outputs.matriz) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            motor/*
+            auto/recetas/*
+            auto/recetas/*/*
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Caché de esta parte
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/fotos
+          key: fotos-${{ github.event.inputs.slug }}-${{ github.event.inputs.de }}-${{ matrix.parte }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            fotos-${{ github.event.inputs.slug }}-${{ github.event.inputs.de }}-${{ matrix.parte }}-
+      - name: Bajar las fotos que faltan
+        env:
+          FOTOS_CACHE: ${{ runner.temp }}/fotos
+          PROXY_NUBE: https://mkt-sistemas.analytics-data-jg-2025.workers.dev/proxy
+          SLUG: ${{ github.event.inputs.slug }}
+          DE: ${{ github.event.inputs.de }}
+        run: |
+          case "$SLUG" in *[!a-zA-Z0-9/_-]*|'') echo "::error::slug no válido"; exit 1;; esac
+          n=$(printf '%s' "$DE" | tr -cd '0-9')
+          echo "ANTES=$(ls "$FOTOS_CACHE" 2>/dev/null | wc -l)" >> "$GITHUB_ENV"
+          node motor/precarga.js "$SLUG" --parte ${{ matrix.parte }} --de "$n"
+          echo "DESPUES=$(ls "$FOTOS_CACHE" | wc -l)" >> "$GITHUB_ENV"
+      - name: Guardar la caché
+        if: always() && env.DESPUES != '' && env.DESPUES != env.ANTES
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/fotos
+          key: fotos-${{ github.event.inputs.slug }}-${{ github.event.inputs.de }}-${{ matrix.parte }}-${{ github.run_id }}-${{ github.run_attempt }}
