@@ -1,5 +1,16 @@
 [
  {
+  "cuando": "2026-11-20T22:46:35.877Z",
+  "productos": 17410,
+  "nuevas": 0,
+  "reusadas": 17410,
+  "originales": 0,
+  "retiradas": 0,
+  "paso": "Respaldo",
+  "respaldo": true,
+  "motivo": "la corrida no terminó"
+ },
+ {
   "cuando": "2026-11-20T17:04:38.616Z",
   "productos": 17410,
   "nuevas": 63,
@@ -832,15 +843,6 @@
   "nuevas": 836,
   "reusadas": 17077,
   "retiradas": 698,
-  "borradas": 0,
-  "paso": "Unir"
- },
- {
-  "cuando": "2026-10-27T21:26:04.041Z",
-  "productos": 17223,
-  "nuevas": 0,
-  "reusadas": 17223,
-  "retiradas": 552,
   "borradas": 0,
   "paso": "Unir"
  }
