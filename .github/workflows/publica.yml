@@ -75,6 +75,7 @@ jobs:
         env:
           SLUG_MANUAL: ${{ github.event.inputs.slug }}
           PARTES_MANUAL: ${{ github.event.inputs.partes }}
+          REPASO: ${{ github.event.inputs.repaso }}
           EVENTO: ${{ github.event_name }}
         run: |
           export HORA=$(TZ=America/Lima date +%H:%M)
@@ -133,7 +134,9 @@ jobs:
                   if (!vencida(slug, horas)) continue;
                 }
                 // Tope de 20 jobs en paralelo en el plan gratuito; con 1 parte igual funciona (más lento).
-                const de = Math.min(20, Math.max(1, pManual || Number(r.partes) || 8));
+                // Un repaso dibuja solo lo pendiente: en 4 partes cada una tiene 375 de cupo de nube en vez
+                // de 93, y el cupo de la corrida (1.500) se aprovecha entero (I-17).
+                const de = process.env.REPASO ? 4 : Math.min(20, Math.max(1, pManual || Number(r.partes) || 8));
                 feeds.push({ slug, de });
                 for (let k = 0; k < de; k++) matriz.push({ slug, parte: k, de });
               }
@@ -364,7 +367,7 @@ jobs:
           echo "Pendientes:"; cat pendientes.txt
           echo "Repaso $((n + 1)) en $espera min (espera para no castigar a la tienda)"; sleep $((espera * 60))
           while read -r slug pend; do
-            gh workflow run publica.yml --ref "${{ github.event.repository.default_branch }}" -f slug="$slug" -f partes=16 -f repaso=$((n + 1)) \
+            gh workflow run publica.yml --ref "${{ github.event.repository.default_branch }}" -f slug="$slug" -f partes=4 -f repaso=$((n + 1)) \
               && echo "Repaso $((n + 1)) lanzado para $slug ($pend pendientes)" >> "$GITHUB_STEP_SUMMARY"
           done < pendientes.txt
 
