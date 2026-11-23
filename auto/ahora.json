@@ -1,6 +1,8 @@
 {
- "pedido": "2026-11-23T07:39:11.772Z",
+ "pedido": "2026-11-23T17:00:48.276Z",
  "slugs": [
-  "lacuracao/c2611_cyberweek-1x1"
- ]
+  "lacuracao/c2611_cyberweek-1x1",
+  "lacuracao/catalogo"
+ ],
+ "auto": true
 }
