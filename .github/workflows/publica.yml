@@ -13,8 +13,7 @@
 #
 # Antes de la primera corrida: Settings > Pages > Source: Deploy from a branch, Branch: main, carpeta /docs.
 name: Feeds a Pages
-# Los repasos automáticos (reintenta.yml) se ven en la lista como «Repaso N: tienda/nombre»; reintenta.yml
-# cuenta con ese título cuántos van, para no reintentar para siempre.
+# Los repasos automáticos (job «repasar») se ven en la lista como «Repaso N: tienda/nombre».
 run-name: "${{ github.event.inputs.repaso && format('Repaso {0}: {1}', github.event.inputs.repaso, github.event.inputs.slug) || 'Feeds a Pages' }}"
 
 on:
@@ -42,13 +41,13 @@ on:
         description: 'solo los primeros N productos (vacío = todo el catálogo). Para la primera prueba.'
         required: false
       repaso:
-        description: 'número de repaso automático (lo pone reintenta.yml; vacío = corrida normal)'
+        description: 'número de repaso automático (lo pone el job «repasar»; vacío = corrida normal)'
         required: false
 
 # Para el commit de las piezas alcanza el token que GitHub da solo: no hace falta ningún secreto.
 permissions:
   contents: write
-  actions: read   # el respaldo mira si viene otra corrida
+  actions: write  # el respaldo mira si viene otra corrida y «repasar» lanza el repaso siguiente
 
 # Nunca dos corridas a la vez sobre el mismo repo: la segunda espera, no pisa.
 concurrency:
@@ -326,6 +325,48 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "Feeds a Pages: $(TZ=America/Lima date '+%Y-%m-%d %H:%M') (Lima)"
           empujar || exit 1
+
+  # Repaso automático (I-11.3): si el feed quedó con productos pendientes (pieza vieja o foto original),
+  # esta misma corrida lanza la siguiente, hasta 6 seguidas. Antes lo hacía reintenta.yml con workflow_run,
+  # pero GitHub no encadena más de 3 niveles de workflow_run y nunca pasaba del repaso 1 (I-16).
+  repasar:
+    needs: [recetas, unir]
+    if: ${{ needs.recetas.outputs.matriz != '[]' && needs.unir.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            docs/*/*/historial.json
+          sparse-checkout-cone-mode: false
+      - name: Lanzar un repaso si quedaron productos pendientes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPASO: ${{ github.event.inputs.repaso }}
+        run: |
+          n=$(printf '%s' "$REPASO" | tr -cd '0-9'); n=${n:-0}
+          export DESDE=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq .run_started_at)
+          if [ "$n" -ge 6 ]; then echo "Ya van $n repasos seguidos: se deja para la próxima hora y queda en el reporte"; exit 0; fi
+          # Feeds que esta corrida publicó (entrada «Unir» posterior a su inicio) y siguen con pendientes.
+          node -e '
+            const fs = require("fs"), path = require("path"), desde = Date.parse(process.env.DESDE) || 0;
+            for (const t of fs.existsSync("docs") ? fs.readdirSync("docs") : []) for (const f of fs.readdirSync(path.join("docs", t))) {
+              let h; try { h = JSON.parse(fs.readFileSync(path.join("docs", t, f, "historial.json"), "utf8")); } catch { continue; }
+              h = (Array.isArray(h) ? h : h.corridas || []).slice().sort((a, b) => Date.parse(b.cuando) - Date.parse(a.cuando));
+              const u = h[0]; if (!u || u.paso !== "Unir" || Date.parse(u.cuando) < desde) continue;
+              const pend = (Number(u.atrasadas) || 0) + (Number(u.originales) || 0);
+              if (pend > 0) console.log(t + "/" + f + " " + pend);
+            }' > pendientes.txt
+          if [ ! -s pendientes.txt ]; then echo "Todo con la pieza de hoy: no hace falta repaso"; exit 0; fi
+          espera=$(( (n + 1) * 4 )); [ "$espera" -gt 15 ] && espera=15
+          echo "Pendientes:"; cat pendientes.txt
+          echo "Repaso $((n + 1)) en $espera min (espera para no castigar a la tienda)"; sleep $((espera * 60))
+          while read -r slug pend; do
+            gh workflow run publica.yml --ref "${{ github.event.repository.default_branch }}" -f slug="$slug" -f partes=16 -f repaso=$((n + 1)) \
+              && echo "Repaso $((n + 1)) lanzado para $slug ($pend pendientes)" >> "$GITHUB_STEP_SUMMARY"
+          done < pendientes.txt
 
   # Respaldo sin marco: si «dibujar» o «unir» fallan, la URL del feed no se queda vieja. Para cada feed
   # de esta corrida que no publicó, se escribe el feed de la tienda tal cual (fotos originales, precios
